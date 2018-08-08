@@ -1,0 +1,174 @@
+%macro data2datastep(dsn,lib,outlib,obs,file,fmt,lbl);
+%local varlist fmtlist inputlist msgtype filepath;
+
+proc sql noprint;
+select setting into: filepath trimmed
+   from dictionary.options
+   where optname='SASINITIALFOLDER'
+;
+quit;
+
+%if &sqlobs=0 %then %do; 
+   %let filepath=%superq(userdir); 
+%end;
+
+%if %superq(obs)= %then %let obs=MAX;
+
+%let msgtype=NOTE;
+%if %superq(dsn)= %then %do;
+   %let msgtype=ERROR;
+   %put &msgtype: You must specify a data set name;
+   %put;
+   %goto syntax;
+%end;
+%let dsn=%qupcase(%superq(dsn));
+%if %superq(dsn)=!HELP %then %do;
+%syntax:
+   data _null_;
+      call symput ('LS',getoption('LS','startupvalue'));
+   run;
+   options ls=100;
+   %put;
+   %put &msgtype: &SYSMACRONAME macro help document:;
+   %put;
+   %put &msgtype- Purpose: Writes a SAS DATA step program to re-create a SAS data set.;
+   %put;
+   %put NOTE-   Example - To create a SAS program to reproduce 10 rows of the dataset SASHELP.CARS,;
+   %put NOTE-             writing the copy to the SAS WORK library (WORK.CARS), just run this code:;
+   %put;
+   %put NOTE-    %nrstr(%%)&SYSMACRONAME(CARS,SASHELP,WORK,10);
+   %put NOTE-   ;
+   %put;
+   %put NOTE:  Use %nrstr(%%)&SYSMACRONAME(!HELP) to print this detailed help for this macro:;
+   %put;
+   %put &msgtype- Syntax: %nrstr(%%)&SYSMACRONAME(dsn<,lib,outlib,obs,file,fmt,lbl>);
+   %put;
+   %put &msgtype- dsn:    Name of the dataset to be converted. Required.;
+   %put &msgtype- lib:    LIBREF of the original dataset. (Optional - if DSN is not fully qualified);
+   %put &msgtype- outlib: (Optional) LIBREF for the output dataset. Default is WORK;
+   %put &msgtype- obs:    (Optional) Max observations to include the created dataset.;
+   %put &msgtype-           Default is MAX (all observations);
+   %put &msgtype- file:   (Optional) Fully qualified filename for the DATA step code produced.;
+   %put &msgtype-           Default is %nrstr(create_&outlib._&dsn._data.sas) in the SAS default directory:;
+   %put &msgtype-           %superq(filepath);
+   %put &msgtype- fmt:    (Optional) Format the numeric variables like the original data set? ;
+   %put &msgtype-           (YES|NO) Default is YES;
+   %put &msgtype- lbl:    (Optional) Reproduce column labels in the output dataset? ;
+   %put &msgtype-           (YES|NO) Default is YES;
+   %put;
+   options ls=&ls;
+   %return;
+%end; 
+%if %superq(fmt)= %then %let fmt=YES;
+%let fmt=%qupcase(&fmt);
+%if %superq(lbl)= %then %let lbl=YES;
+%let lbl=%qupcase(&lbl);
+
+%if %superq(lib)= %then %do;
+    %let lib=%qscan(%superq(dsn),1,.);
+    %if %superq(lib) = %superq(dsn) %then %let lib=WORK;
+    %else %let dsn=%qscan(&dsn,2,.);
+%end;
+%if %superq(outlib)= %then %let outlib=WORK;
+%let lib=%qupcase(%superq(lib));
+%let dsn=%qupcase(%superq(dsn));
+
+%if %sysfunc(exist(&lib..&dsn)) ne 1 %then %do;
+   %put ERROR: (&SYSMACRONAME) - Dataset &lib..&dsn does not exist.;
+   %let msgtype=NOTE;
+   %GoTo syntax;
+%end;
+
+%if %superq(file)= %then %do;
+   %let file=create_&outlib._&dsn._data.sas;
+   %if %symexist(USERDIR) %then %let file=&userdir/&file;
+%end;
+
+%if %qscan(%superq(file),-1,/\)=%superq(file) %then %let file=&filepath/&file;
+
+proc sql noprint;
+select Name
+      into :varlist separated by ' '
+   from dictionary.columns
+   where libname="&lib"
+     and memname="&dsn"
+;
+select case type
+          when 'num' then 
+             case 
+                when missing(format) then cats(Name,':32.')
+                else cats(Name,':',format)
+             end 
+          else cats(Name,':$',length,'.')
+       end
+      into :inputlist separated by ' '
+   from dictionary.columns
+   where libname="&lib"
+     and memname="&dsn"
+;
+%if %qsubstr(%superq(lbl),1,1)=Y %then %do;
+select strip(catx('=',Name,put(label,$quote.)))
+   into : lbllist separated by ' '
+   from dictionary.columns 
+   where libname="&lib"
+     and memname="&dsn"
+     and label is not null 
+;
+%end;
+%else %let lbllist=;
+select memlabel 
+   into :memlabel trimmed
+   from dictionary.tables
+   where libname="&lib"
+     and memname="&dsn"
+;
+%if %qsubstr(%superq(fmt),1,1)=Y %then %do;
+select strip(catx(' ',Name,format))
+      into :fmtlist separated by ' '
+   from dictionary.columns
+   where libname="&lib"
+     and memname="&dsn"
+     and format is not null 
+     and format not like '$%'
+;
+%end;
+%else %let fmtlist=;
+quit;
+
+%put _local_;
+
+data _null_;
+   file "%superq(file)" dsd;
+   if _n_ =1 then do;
+   %if %superq(memlabel)= %then %do;
+      put "data &outlib..&dsn;";
+   %end;
+   %else %do;
+      put "data &outlib..&dsn(label=%tslit(%superq(memlabel)));";
+   %end;
+      put @3 "infile datalines dsd truncover;";
+      put @3 "input %superq(inputlist);";
+   %if not (%superq(fmtlist)=) %then %do;
+      put @3 "format %superq(fmtlist);";
+   %end;
+   %if not (%superq(lbllist)=) %then %do;
+      put @3 "label %superq(lbllist);";
+   %end;
+      put "datalines4;";
+   end;
+   set &lib..&dsn(obs=&obs) end=last; 
+   put &varlist @;
+   if last then do;
+      put;
+      put ';;;;';
+   end;
+   else put;
+run;
+
+   %put;
+   %put NOTE- *****************************************************************;
+   %put NOTE-  Your SAS program which creates &outlib..&dsn is ready at;
+   %put NOTE-  %superq(file);
+   %put NOTE- *****************************************************************;
+
+%mend;
