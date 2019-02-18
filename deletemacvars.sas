@@ -3,6 +3,8 @@
  Created by Mark Jordan @SASJedi http://go.sas.com/jedi
  Save the macro source code file (deletemacvars.sas) in the AUTOCALL path. 
  Call the macro with !HELP as the parameter for usage and syntax
+ Published 2/18/2019
+ https://raw.githubusercontent.com/SASJedi/jedi-sas-tricks/master/deletemacvars.sas
 ********************************************************************/
 %local UserMacroVariables ls;
 %let Prefix=%qupcase(%superq(Prefix));
@@ -12,14 +14,19 @@ options ls=100;
 %if %SUPERQ(Prefix)=!HELP %then %do;
 %Syntax:
    %put &MsgType: &SYSMACRONAME macro help document:;
+   %put;
    %put &MsgType- Purpose: Deletes macro variables from the global symbol table.;
+   %put;
    %put &MsgType- Syntax: %nrstr(%%)&SYSMACRONAME(<Prefix,Keep>);
+   %put;
    %put &MsgType- Prefix: The first few letters of a series of macro names.;
    %put &MsgType-         If null, deletes all global scope macro variables;
    %put &MsgType-         except those created by the SAS system.;
    %put &MsgType-         (!HELP produces this syntax help in the SAS log);
+   %put;
    %put &MsgType-   Keep: If not null, keeps the variables for the specified prefix.;
    %put &MsgType-         Otherwise, deletes only variables for the specified prefix.;
+   %put;
    options ls=&ls;
    %return;
 %end; 
